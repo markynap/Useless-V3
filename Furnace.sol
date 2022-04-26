@@ -2,28 +2,26 @@
 pragma solidity 0.8.4;
 
 import "./IERC20.sol";
-import "./Address.sol";
 import "./SafeMath.sol";
 import "./IUniswapV2Router02.sol";
-import "./FurnaceDB.sol";
 
 interface IUseless {
     function burn(uint amount) external;
 }
 
+interface IFurnaceDB {
+    function pullLiquidityRange() external view returns (uint256);
+    function buyAndBurnRange() external view returns (uint256);
+    function reverseSALRange() external view returns (uint256);
+}
+
 /**
  * 
- * BNB Sent to this contract will be used to automatically manage the Useless Liquidity Pool
- * Ideally keeping Liquidity Pool Size between 7% - 12.5% of the circulating supply of Useless
- * Liquidity over 20% - LP Extraction
- * Liquidity over 12.5% - Buy/Burn Useless
- * Liquidity between 6.67 - 12.5%  - ReverseSwapAndLiquify
- * Liquidity under 6.67% - LP Injection
+ * ONE Sent to this contract will be used to automatically manage the Useless Liquidity Pool
  *
  */
 contract UselessFurnace {
     
-    using Address for address;
     using SafeMath for uint256;
   
     /**  Useless Stats  **/
@@ -34,7 +32,7 @@ contract UselessFurnace {
     address immutable private ONE;
     
     // database
-    FurnaceDB furnaceDB = FurnaceDB(0x4aE3ab4aA35634B2B5BaaEd603182bDeDB5C3629);
+    IFurnaceDB furnaceDB;
   
     /** ONE Thresholds **/
     uint256 constant public automateThreshold = 5 * 10**16;
@@ -49,16 +47,19 @@ contract UselessFurnace {
     /** ONE -> Token **/
     address[] private ONEToToken;
 
-    constructor(address _useless, address _uselessLP) {
+    constructor(address _useless, address _uselessLP, address _furnaceDB) {
         // Instantiate Token and LP
         _token = _useless;
         _tokenLP = _uselessLP;
         // WETH
         ONE = router.WETH();
-        // BNB -> Token
+        // ONE -> Token
         ONEToToken = new address[](2);
         ONEToToken[0] = router.WETH();
-        ONEToToken[1] = _token;
+        ONEToToken[1] = _useless;
+
+        // furnace database
+        furnaceDB = IFurnaceDB(_furnaceDB);
     }
   
     /** Automate Function */
@@ -81,22 +82,18 @@ contract UselessFurnace {
         // determine the health of the lp
         uint256 dif = determineLPHealth();
         // check cases
-        dif = clamp(dif, 1, 100);
+        dif = clamp(dif, 1, 10000);
         
         (uint256 pullLiquidityRange, uint256 buyAndBurnRange, uint256 reverseSALRange) = getRanges();
     
         if (dif <= pullLiquidityRange) {
-            uint256 percent = uint256(100).div(dif);
-            // pull liquidity
+            uint256 percent = uint256(10000).div(dif);
             pullLiquidity(percent);
         } else if (dif <= buyAndBurnRange) {
-            // if LP is over 12.5% of Supply we buy burn useless
             buyAndBurn();
         } else if (dif <= reverseSALRange) {
-            // if LP is between 6.666%-12.5% of Supply we call reverseSAL
             reverseSwapAndLiquify();
         } else {
-            // if LP is under 6.666% of Supply we provide a pairing if one exists, else we call reverseSAL
             uint256 tokenBal = IERC20(_token).balanceOf(address(this));
             if (liquidityThresholdReached(tokenBal)) {
                 pairLiquidity(tokenBal);
@@ -130,18 +127,18 @@ contract UselessFurnace {
     }
   
    /**
-    * Uses BNB in Contract to Purchase Useless, pairs with remaining BNB and adds to Liquidity Pool
+    * Uses ONE in Contract to Purchase Useless, pairs with remaining ONE and adds to Liquidity Pool
     * Reversing The Effects Of SwapAndLiquify
     * Price Positive - LP Neutral Operation
     */
     function reverseSwapAndLiquify() private {
-        // BNB Balance before the swap
+        // ONE Balance before the swap
         uint256 initialBalance = address(this).balance > max_ONE_in_call ? max_ONE_in_call : address(this).balance;
         // USELESS Balance before the Swap
         uint256 contractBalance = IERC20(_token).balanceOf(address(this));
-        // Swap 50% of the BNB in Contract for USELESS Tokens
+        // Swap 50% of the ONE in Contract for USELESS Tokens
         uint256 transferAMT = initialBalance.div(2);
-        // Swap BNB for USELESS
+        // Swap ONE for USELESS
         router.swapExactETHForTokens{value: transferAMT}(
             0, // accept any amount of USELESS
             ONEToToken,
@@ -156,25 +153,25 @@ contract UselessFurnace {
     }
    
     /**
-     * Pairs BNB and USELESS in the contract and adds to liquidity if we are above thresholds 
+     * Pairs ONE and USELESS in the contract and adds to liquidity if we are above thresholds 
      */
     function pairLiquidity(uint256 uselessInContract) private {
-        // amount of bnb in the pool
-        uint256 bnbLP = IERC20(ONE).balanceOf(_tokenLP);
+        // amount of ONE in the pool
+        uint256 ONELP = IERC20(ONE).balanceOf(_tokenLP);
         // make sure we have tokens in LP
-        bnbLP = bnbLP == 0 ? address(_tokenLP).balance : bnbLP;
-        // how much BNB do we need to pair with our useless
-        uint256 bnbbal = getTokenInToken(_token, ONE, uselessInContract);
-        //if there isn't enough bnb in contract
-        if (address(this).balance < bnbbal) {
-            // recalculate with bnb we have
-            uint256 nUseless = uselessInContract.mul(address(this).balance).div(bnbbal);
+        ONELP = ONELP == 0 ? address(_tokenLP).balance : ONELP;
+        // how much ONE do we need to pair with our useless
+        uint256 ONEBal = getTokenInToken(_token, ONE, uselessInContract);
+        //if there isn't enough ONE in contract
+        if (address(this).balance < ONEBal) {
+            // recalculate with ONE we have
+            uint256 nUseless = uselessInContract.mul(address(this).balance).div(ONEBal);
             addLiquidity(nUseless, address(this).balance);
             emit LiquidityPairAdded(nUseless, address(this).balance);
         } else {
             // pair liquidity as is 
-            addLiquidity(uselessInContract, bnbbal);
-            emit LiquidityPairAdded(uselessInContract, bnbbal);
+            addLiquidity(uselessInContract, ONEBal);
+            emit LiquidityPairAdded(uselessInContract, ONEBal);
         }
     }
     
@@ -201,14 +198,14 @@ contract UselessFurnace {
     } 
     
     /**
-     * Adds USELESS and BNB to the USELESS/BNB Liquidity Pool
+     * Adds USELESS and ONE to the USELESS/ONE Liquidity Pool
      */ 
-    function addLiquidity(uint256 uselessAmount, uint256 bnbAmount) private {
+    function addLiquidity(uint256 uselessAmount, uint256 ONEAmount) private {
        
         // approve router to move tokens
         IERC20(_token).approve(address(router), uselessAmount);
         // add the liquidity
-        router.addLiquidityETH{value: bnbAmount}(
+        router.addLiquidityETH{value: ONEAmount}(
             _token,
             uselessAmount,
             0,
@@ -219,7 +216,7 @@ contract UselessFurnace {
     }
 
     /**
-     * Removes Liquidity from the pool and stores the BNB and USELESS in the contract
+     * Removes Liquidity from the pool and stores the ONE and USELESS in the contract
      */
     function pullLiquidity(uint256 percentLiquidity) private returns (bool){
        // Percent of our LP Tokens
@@ -248,14 +245,12 @@ contract UselessFurnace {
         // Find the balance of USELESS in the liquidity pool
         uint256 lpBalance = IERC20(_token).balanceOf(_tokenLP).mul(2);
         // lpHealth = Supply / LP Balance
-        return lpBalance == 0 ? 6 : getCirculatingSupply().div(lpBalance);
+        return lpBalance == 0 ? 2 : getCirculatingSupply().mul(100).div(lpBalance);
     }
     
     /** Whether or not the Pair Liquidity Threshold has been reached */
     function liquidityThresholdReached(uint256 bal) private view returns (bool) {
-        uint256 circulatingSupply = getCirculatingSupply();
-        uint256 pow = circulatingSupply < (10**10 * 10**9) ? 5 : 7;
-        return bal >= getCirculatingSupply().div(10**pow);
+        return bal >= getCirculatingSupply().div(10**7);
     }
   
     /** Returns the Circulating Supply of Token */
@@ -285,12 +280,12 @@ contract UselessFurnace {
     }
   
     // EVENTS 
-    event BuyAndBurn(uint256 amountBNBUsed);
-    event ReverseSwapAndLiquify(uint256 uselessAmount,uint256 bnbAmount);
-    event LiquidityPairAdded(uint256 uselessAmount,uint256 bnbAmount);
+    event BuyAndBurn(uint256 amountONEUsed);
+    event ReverseSwapAndLiquify(uint256 uselessAmount,uint256 ONEAmount);
+    event LiquidityPairAdded(uint256 uselessAmount,uint256 ONEAmount);
     event LiquidityPulled(uint256 percentOfLiquidity, uint256 numLPTokens);
 
-    // Receive BNB
+    // Receive ONE
     receive() external payable { }
 
 }

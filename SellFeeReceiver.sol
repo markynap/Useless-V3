@@ -27,7 +27,7 @@ contract SellFeeReceiver is Ownable {
     event SetDistributor(address newDistributor);
 
     constructor() {
-        path = address[](2);
+        path = new address[](2);
         path[0] = token;
         path[1] = router.WETH();
     }
@@ -63,15 +63,15 @@ contract SellFeeReceiver is Ownable {
         emit SetDistributor(distributor_);
     }
     function withdraw() external onlyOwner {
-        (bool s,) = payable(owner).call{vaule: amount}("");
+        (bool s,) = payable(msg.sender).call{value: address(this).balance}("");
         require(s);
     }
-    function withdraw(address token) external onlyOwner {
-        IERC20(token).transfer(owner, IERC20(token).balanceOf(address(this)));
+    function withdraw(address token_) external onlyOwner {
+        IERC20(token_).transfer(msg.sender, IERC20(token_).balanceOf(address(this)));
     }
     receive() external payable {}
     function _send(address recipient, uint amount) internal {
-        (bool s,) = payable(recipient).call{vaule: amount}("");
+        (bool s,) = payable(recipient).call{value: amount}("");
         require(s);
     }
 }

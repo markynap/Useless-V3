@@ -2,16 +2,25 @@
 pragma solidity 0.8.4;
 
 import "./SafeMath.sol";
-import "./Address.sol";
 import "./IUniswapV2Router02.sol";
 import "./IERC20.sol";
-import "./ReentrantGuard.sol";
 
 /** Distributes Tokens To Useless Holders Based On Weight */
-contract Distributor is ReentrancyGuard {
+contract Distributor {
     
     using SafeMath for uint256;
-    using Address for address;
+
+    // Reentrancy
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+    uint256 private _status;
+
+    modifier nonReentrant() {
+        require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
+        _status = _ENTERED;
+        _;
+        _status = _NOT_ENTERED;
+    }
     
     // Useless Contract
     address public _token;
@@ -70,11 +79,13 @@ contract Distributor is ReentrancyGuard {
         // Set Router
         v2router = _router;
         // BUSD
-        _approveTokenForSwap(_busd);
+        _approveTokenForSwap(_busd, _router);
         // BUSD is Main
         main = _busd;
         // Distributor master 
         _tokenOwner = msg.sender;
+        // reentrancy
+        _status = _NOT_ENTERED;
     }
     
     ///////////////////////////////////////////////
@@ -203,7 +214,7 @@ contract Distributor is ReentrancyGuard {
         rewardTokens[token] = RewardToken({
             isApproved: true,
             dexRouter: router,
-            index: allRewardTokens.length;
+            index: allRewardTokens.length
         });
         allRewardTokens.push(token);
     }
@@ -262,7 +273,7 @@ contract Distributor is ReentrancyGuard {
     }
     
     function getRewardTokens() external view returns (address[] memory) {
-        return rewardTokens;
+        return allRewardTokens;
     }
 
     function getShareForHolder(address holder) external view returns(uint256) {

@@ -3,6 +3,7 @@ pragma solidity 0.8.4;
 
 import "./SafeMath.sol";
 import "./Ownable.sol";
+import "./IERC20.sol";
 
 contract Allocator is Ownable {
 

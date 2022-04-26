@@ -27,8 +27,8 @@ contract BuyFeeReceiver is Ownable {
         uint balance = IERC20(token).balanceOf(address(this));
         IERC20(token).transfer(furnace, balance / 3);        
         IERC20(token).transfer(multisig, balance / 3);
-        IERC20(token).approve(stakingContract, IERC20(token).balanceOf(address(this));
-        Depositor(stakingContract).deposit(IERC20(token).balanceOf(address(this));
+        IERC20(token).approve(stakingContract, IERC20(token).balanceOf(address(this)));
+        Depositor(stakingContract).deposit(IERC20(token).balanceOf(address(this)));
     }
 
     function setFurnace(address furnace_) external onlyOwner {
@@ -47,11 +47,11 @@ contract BuyFeeReceiver is Ownable {
         emit SetStakingContract(stakingContract_);
     }
     function withdraw() external onlyOwner {
-        (bool s,) = payable(owner).call{vaule: amount}("");
+        (bool s,) = payable(msg.sender).call{value: address(this).balance}("");
         require(s);
     }
-    function withdraw(address token) external onlyOwner {
-        IERC20(token).transfer(owner, IERC20(token).balanceOf(address(this)));
+    function withdraw(address token_) external onlyOwner {
+        IERC20(token_).transfer(msg.sender, IERC20(token_).balanceOf(address(this)));
     }
     receive() external payable {}
 }
