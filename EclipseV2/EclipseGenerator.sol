@@ -1,11 +1,66 @@
 //SPDX-License-Identifier: MIT
 pragma solidity 0.8.4;
 
-import "./IEclipse.sol";
-import "./Proxyable.sol";
 import "./SafeMath.sol";
 import "./Address.sol";
 import "./IERC20.sol";
+
+/*
+    @title Proxyable a minimal proxy contract based on the EIP-1167 .
+    @notice Using this contract is only necessary if you need to create large quantities of a contract.
+        The use of proxies can significantly reduce the cost of contract creation at the expense of added complexity
+        and as such should only be used when absolutely necessary. you must ensure that the memory of the created proxy
+        aligns with the memory of the proxied contract. Inspect the created proxy during development to ensure it's
+        functioning as intended.
+    @custom::warning Do not destroy the contract you create a proxy too. Destroying the contract will corrupt every proxied
+        contracted created from it.
+*/
+contract Proxyable {
+    bool private proxy;
+
+    /// @notice checks to see if this is a proxy contract
+    /// @return proxy returns false if this is a proxy and true if not
+    function isProxy() external view returns (bool) {
+        return proxy;
+    }
+
+    /// @notice A modifier to ensure that a proxy contract doesn't attempt to create a proxy of itself.
+    modifier isProxyable() {
+        require(!proxy, "Unable to create a proxy from a proxy");
+        _;
+    }
+
+    /// @notice initialize a proxy setting isProxy_ to true to prevents any further calls to initialize_
+    function initialize_() external isProxyable {
+        proxy = true;
+    }
+
+    /// @notice creates a proxy of the derived contract
+    /// @return proxyAddress the address of the newly created proxy
+    function createProxy() external isProxyable returns (address proxyAddress) {
+        // the address of this contract because only a non-proxy contract can call this
+        bytes20 deployedAddress = bytes20(address(this));
+        assembly {
+        // load the free memory pointer
+            let fmp := mload(0x40)
+        // first 20 bytes of built in proxy bytecode
+            mstore(fmp, 0x3d602d80600a3d3981f3363d3d373d3d3d363d73000000000000000000000000)
+        // store 20 bytes from the target address at the 20th bit (inclusive)
+            mstore(add(fmp, 0x14), deployedAddress)
+        // store the remaining bytes
+            mstore(add(fmp, 0x28), 0x5af43d82803e903d91602b57fd5bf30000000000000000000000000000000000)
+        // create a new contract using the proxy memory and return the new address
+            proxyAddress := create(0, fmp, 0x37)
+        }
+        // intiialize the proxy above to set its isProxy_ flag to true
+        Proxyable(proxyAddress).initialize_();
+    }
+}
+
+interface IEclipse {
+    function decay() external;
+    function bind(address token) external;
+}
 
 /** 
  * 
@@ -54,6 +109,7 @@ contract EclipseGenerator {
         bool isListed;
         uint256 buyFee;
         uint256 sellFee;
+        uint256 expectedGas;
         uint256 listedIndex;
     }
 
@@ -105,6 +161,14 @@ contract EclipseGenerator {
         IERC20(token).transfer(msg.sender, bal);
     }
 
+    function setDecayPeriod(uint256 newPeriod) external onlyMaster {
+        _decayPeriod = newPeriod;
+    }
+
+    function setFeeCollector(address newCollector) external onlyMaster {
+        feeCollector = newCollector;
+    }
+
     function setDecayFee(uint256 newFee) external onlyMaster {
         require(
             newFee <= 30,
@@ -134,15 +198,24 @@ contract EclipseGenerator {
         listedTokens[token].sellFee = sellFee;
     }
 
-    function listToken(address token) external onlyMaster {
-        _listToken(token, 0, 0);
+    function setExpectedGas(address token, uint256 expectedGas) external onlyMaster {
+        listedTokens[token].expectedGas = expectedGas;
     }
 
-    function listTokenWithFees(address token, uint256 buyFee, uint256 sellFee) external onlyMaster {
-        _listToken(token, buyFee, sellFee);
+    function delistTokenAndEclipse(address token) external onlyMaster {
+        delistToken(token);
+        _deleteEclipse(token);
+    }
+
+    function listToken(address token) external onlyMaster {
+        _listToken(token, 0, 0, 0);
+    }
+
+    function listTokenWithFees(address token, uint256 buyFee, uint256 sellFee, uint256 expectedGas) external onlyMaster {
+        _listToken(token, buyFee, sellFee, expectedGas);
     }
     
-    function delistToken(address token) external onlyMaster {
+    function delistToken(address token) public onlyMaster {
         require(
             listedTokens[token].isListed,
             'Not Listed'
@@ -153,7 +226,7 @@ contract EclipseGenerator {
         delete listedTokens[token];
     }
 
-    function _listToken(address token, uint256 buyFee, uint256 sellFee) private {
+    function _listToken(address token, uint256 buyFee, uint256 sellFee, uint256 expectedGas) private {
         require(
             !listedTokens[token].isListed,
             'Already Listed'
@@ -161,6 +234,7 @@ contract EclipseGenerator {
         listedTokens[token].isListed = true;
         listedTokens[token].buyFee = buyFee;
         listedTokens[token].sellFee = sellFee;
+        listedTokens[token].expectedGas = expectedGas;
         listedTokens[token].listedIndex = listed.length;
         listed.push(token);
     }
@@ -206,6 +280,7 @@ contract EclipseGenerator {
     function createEclipse(address _tokenToList) external payable {
         require(tx.origin == msg.sender, 'No Proxies Allowed');
         require(msg.value >= creationCost || _isMaster[msg.sender], 'Cost Not Met');
+        require(tokenToEclipse[_tokenToList] == address(0), 'Eclipse Already Generated');
         // create proxy
         address hill = Proxyable(payable(_parentProxy)).createProxy();
         // initialize proxy
@@ -321,6 +396,4 @@ contract EclipseGenerator {
     
     
     event EclipseCreated(address Eclipse, address tokenListed);
-    event TransferOwnership(address newOwner);
-
 }

@@ -3,7 +3,6 @@ pragma solidity 0.8.4;
 
 import "./IERC20.sol";
 import "./EclipseGenerator.sol";
-import "./Proxyable.sol";
 
 /** 
  *
@@ -20,14 +19,14 @@ contract EclipseData {
 }
 
 
-contract Eclipse is EclipseData, IEclipse, Proxyable {
+contract Eclipse is EclipseData, Proxyable {
     
     using SafeMath for uint256; 
         
     function bind(address eclipseToken) external {
-        require(_useless == address(0), 'Proxy Already Bound');
+        require(_eclipseToken == address(0), 'Proxy Already Bound');
         _eclipseToken = eclipseToken;
-        _fetcher = EclipseGenerator(msg.sender);
+        _fetcher = EclipseGenerator(payable(msg.sender));
         lastDecay = block.number;
     }
     
@@ -37,7 +36,7 @@ contract Eclipse is EclipseData, IEclipse, Proxyable {
     
     function decay() external {
         address useless = _fetcher.useless();
-        uint256 bal = IERC20(_useless).balanceOf(address(this));
+        uint256 bal = IERC20(useless).balanceOf(address(this));
         if (bal == 0) { return; }
 
         if (lastDecay + _fetcher.getDecayPeriod() > block.number) { return; }
@@ -46,7 +45,7 @@ contract Eclipse is EclipseData, IEclipse, Proxyable {
         uint256 minimum = _fetcher.getUselessMinimumToDecayFullBalance();
         uint256 takeBal = bal <= minimum ? bal : bal * _fetcher.getDecayFee() / 100;
         if (takeBal > 0) {
-            bool success = IERC20(_useless).transfer(_fetcher.feeCollector(), takeBal);
+            bool success = IERC20(useless).transfer(_fetcher.feeCollector(), takeBal);
             require(success, 'Failure on Useless Transfer To Furnace');
         }
         emit Decay(takeBal);
@@ -57,7 +56,7 @@ contract Eclipse is EclipseData, IEclipse, Proxyable {
     //////////////////////////////////////////
     
     function getUselessInContract() external view returns (uint256) {
-        return IERC20(_useless).balanceOf(address(this));
+        return IERC20(_fetcher.useless()).balanceOf(address(this));
     }
     
     function getTokenRepresentative() external view returns (address) {
